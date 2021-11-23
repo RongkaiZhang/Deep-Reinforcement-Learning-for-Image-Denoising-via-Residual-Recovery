@@ -14,7 +14,6 @@
 1. pytorch >= 1.6
 2. opencv
 # Citation
------
 
 In case of use, please cite our publication:
 
