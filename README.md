@@ -9,4 +9,4 @@
 # How to apply to other tasks:
 1. Customize the environment by setting task specific reset(), step() in environment.py.\
 2. Customize the data file paths in PPO_batch.py.\
-3. Customize data argumentation
+3. Customize data argumentation in Load_batch.py.
