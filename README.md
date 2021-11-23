@@ -4,7 +4,7 @@
 3. Although this project is for a specific task, this framework is designed ASAP (as simple as possible) to be applied for different tasks trained in "Batch Environment" (Batch * Channel * Height * Width) by slightly modifing the corresponding network and envrionment.
 # Introduction to this implementation:
 1. Current implementations of PPO usually focus on environments with states in shape of (Height * Width) raising a gap for implementations in CV where (Channel * Height * Width) is needed.
-2. This implementation aims for a easy-to-modify PPO framework for CV tasks.
+2. This implementation aims for an easy-to-modify PPO framework for CV tasks.
 3. The PPO used here is [PPO-clip](https://spinningup.openai.com/en/latest/algorithms/ppo.html).
 # How to apply to other tasks:
 1. Customize the environment by setting task specific reset(), step() in environment.py.
