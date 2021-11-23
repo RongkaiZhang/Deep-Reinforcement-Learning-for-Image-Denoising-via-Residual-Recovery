@@ -13,3 +13,21 @@
 # Dependance:
 1. pytorch >= 1.6
 2. opencv
+Citation
+-----
+
+In case of use, please cite our publication:
+
+Rongkai Zhang, Jiang Zhu, Zhiyuan Zha, Justin Dauwels, Bihan Wen, "R3L: Connecting Deep Reinforcement Learning to Recurrent Neural Networks for Image Denoising via Residual Recovery," ICIP 2021.
+
+Bibtex:
+```
+@inproceedings{zhang2021r3l,
+  title={R3L: Connecting Deep Reinforcement Learning to Recurrent Neural Networks for Image Denoising via Residual Recovery},
+  author={Zhang, Rongkai and Zhu, Jiang and Zha, Zhiyuan and Dauwels, Justin and Wen, Bihan},
+  booktitle={2021 IEEE International Conference on Image Processing (ICIP)},
+  pages={1624--1628},
+  year={2021},
+  organization={IEEE}
+}
+```
