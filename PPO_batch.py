@@ -4,47 +4,26 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.distributions import Categorical
 from Loader_batch import *
-#from sparselandtools.dictionaries import DCTDictionary
 import cv2
 from Environment import Cusenv
-#Generating Dictionary
-#dct_dictionary = DCTDictionary(8, 10)
-#D = dct_dictionary.matrix
-#CUDA_LAUNCH_BLOCKING = 1
-#Hyperparameters
 
-gamma         = 0.95
+#Hyperparameters for PPO
+gamma         = 0.95 
 lmbda         = 1
 eps_clip      = 0.5
-K_epoch       = 15 #10 is not used
-T_horizon     = 8
+K_epoch       = 15 # Minibatch_size in PPO
 Train_Folder = 'BSD68/gray/train/'
 Test_Folder = 'BSD68/gray/test/'
 Crop_Size = 70
-'''
-class SELayer(nn.Module):
-    def __init__(self, channel, reduction=8):
-        super(SELayer, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(channel, channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Linear(channel // reduction, channel, bias=False),
-            nn.Sigmoid()
-        )
 
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y.expand_as(x)
-'''
 class PPO(nn.Module):
     def __init__(self, device, batch_size):
         super(PPO, self).__init__()
-        self.data = []
+        self.data = [] # data buffer is built in PPO class
+        self.batch_size = batch_size # input data is [batch_size, channel, H, W]
+        #Load DnCNN weights and bias for initialization
         net = torch.load('dncnn_25.pth')
-        self.batch_size = batch_size
+        #The layers to build network (FCN is used here and can be replaced for different tasks)
         self.conv1   = nn.Conv2d(in_channels=1, out_channels=64, kernel_size=3, stride=1, padding=1, dilation=1, bias=True, padding_mode='zeros')
         self.conv2   = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=2, dilation=2, bias=True, padding_mode='zeros')
         self.conv3   = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=3, dilation=3, bias=True, padding_mode='zeros')
@@ -56,6 +35,7 @@ class PPO(nn.Module):
         self.conv6_v   = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=2, dilation=2, bias=True, padding_mode='zeros')
         self.conv7_v   = nn.Conv2d(in_channels=64, out_channels=1, kernel_size=3, stride=1, padding=1, dilation=1, bias=True, padding_mode='zeros')
         self.relu = nn.ReLU(inplace= True)
+        #Initialize the weights and bias
         nn.init.kaiming_normal_(self.conv1.weight)
         self.conv2.weight.data = net['model.6.weight']
         self.conv2.bias.data = net['model.6.bias']
@@ -101,7 +81,7 @@ class PPO(nn.Module):
     def put_data(self, transition):
         self.data.append(transition)
 
-    def make_batch(self):
+    def make_batch(self):# Convert list of transactions into tensors
         s_lst, a_lst, r_lst, s_prime_lst, prob_a_lst, done_lst= [], [], [], [], [], []
         for transition in self.data:
             s, a, r, s_prime, prob_a, done = transition
@@ -126,9 +106,9 @@ class PPO(nn.Module):
         #s_prime = s_prime.squeeze(1)
 
 
-        return s, a, r, s_prime, prob_a, done_mask.repeat_interleave(self.batch_size) # 2 == batch_size
+        return s, a, r, s_prime, prob_a, done_mask.repeat_interleave(self.batch_size) 
 
-    def train_net(self):
+    def train_net(self):# Train the network
         s, a, r, s_prime, prob_a, done_mask = self.make_batch()
 
         for i in range(K_epoch):
@@ -138,54 +118,61 @@ class PPO(nn.Module):
 
             advantage_lst = []
             advantage = 0.0
-            for time in range(int(len(delta) / self.batch_size) - 1, -1, -1):  # 2 == batch_size
-                advantage = gamma * lmbda * advantage + delta[time*self.batch_size:(time+1)*self.batch_size]  # 2 == batch_size
+            # reorder the transactions by batch
+            for time in range(int(len(delta) / self.batch_size) - 1, -1, -1): 
+                advantage = gamma * lmbda * advantage + delta[time*self.batch_size:(time+1)*self.batch_size] 
                 for adv in advantage[::-1]:
                     advantage_lst.insert(0,adv)
-                #advantage_lst.extend(advantage)
-                #advantage_lst = advantage + advantage_lst
             advantage = torch.tensor(advantage_lst, dtype=torch.float).to(self.device)
 
             pi = self.pi(s)
+            #If use entropy in loss
+            #pi = pi+1e-13 #1e-13 for stable training
             #entropy = (- pi*torch.log(pi)).sum(1).mean()
-            # pi = torch.clamp(pi, min=1e-5, max=1)
-            # pi_a = dist.log_prob(a)
             pi_a = pi.gather(1, a)
             ratio = (pi_a / prob_a)  # a/b == exp(log(a)-log(b))
             surr1 = ratio * advantage
             surr2 = torch.clamp(ratio, 1 - eps_clip, 1 + eps_clip) * advantage
-            loss = -torch.min(surr1, surr2) + F.smooth_l1_loss(self.v(s), td_target.detach())#-0.01*entropy
+            loss = -torch.min(surr1, surr2) + F.smooth_l1_loss(self.v(s), td_target.detach()) #-0.01*entropy if use entropy
             loss = loss.mean()
             self.optimizer.zero_grad()
             loss.mean().backward()
             self.optimizer.step()
-
+#Train and validate in main() 
 def main():
+    #Define hyperparameters for training
     device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     batch_size = 32
     print_interval = 1
     test_interval = 1000
     learning_rate = 0.001
     save_interval = 3000
+    #Setup env. Cusenv() is a customized enironemnt which takes in the current state S and outputs the new state S_prime, Reward and Done (for episodic task).
     env = Cusenv()
+    #Use PPO model.
     model = PPO(device,batch_size).to(device)
-    i = 0
+    #Load all data from files directly
     training_data = load_images_from_folder(Train_Folder)
     train_data_size = len(training_data)
     test_data = load_images_from_folder(Test_Folder)
+    #Start to train 30001 episodes
+    i = 0
     for n_epi in range(30001):#
         score = 0.0
+        #Data preprocessing (augmentationm, crop, resize to (B,C,H,W), normalize)
         data = training_data[i:i + batch_size]
         data = data_augment(data)
         data = data_crop(data, Crop_Size)
         data = np.array(data)
         data = data[:, np.newaxis, :, :]
         raw_x = data / 255
+        #Generate noise 
         raw_n = np.random.normal(0, 25, raw_x.shape).astype(raw_x.dtype) / 255
+        #Reset env (here is just add noise to image)
         s = env.reset(raw_x, raw_n)
         done = False
         t_info = 0
-        #for t in range(T_horizon):
+        #Rollout 
         while not done:
             prob = model.pi(torch.from_numpy(s).float().to(device)).detach().cpu()
             prob = prob.permute(0,2,3,1)
@@ -197,14 +184,18 @@ def main():
             #if done:
                     #print('Epoch', n_epi,'Image',n, 'process', t_info, 'steps')
             t_info += 1
-            model.put_data((s, action, r, s_prime, prob_a, done))
+            model.put_data((s, action, r, s_prime, prob_a, done)) #All (s, action, r, s_prime, prob_a, done) are saved as numpy for convenience
             s = s_prime
             score += r
+        #Train model after one rollout with batch_size images.
         model.train_net()
 
+        #Show score (for image denoising with sigma = 25, the max score (when all noise is removed) should be )
         if n_epi%print_interval==0 and n_epi!=0:
             print("# of episode :{}, avg score : {:.3f}".format(n_epi, np.mean(score)*255))
             score = 0.0
+            
+        #Validate the model
         if n_epi%test_interval==0 and n_epi!=0:
             test_result = 0
             test_id = 0
@@ -254,7 +245,7 @@ def main():
                 test_id +=1
             print('Overall performance:', test_result/len(test_data))
 
-        #model.optimizer = optim.Adam(model.parameters(), lr=1e-3*((1-n_epi/2001)**0.9), weight_decay=0.0001)
+       
         if n_epi%save_interval==0 and n_epi!=0:
             torch.save(model,'PPO_model_{}.pt'.format(n_epi))
             score = 0.0
@@ -268,7 +259,7 @@ def main():
         if i + 2 * batch_size >= train_data_size:
             i = train_data_size - batch_size
 
-        model.optimizer = optim.Adam(model.parameters(), lr=learning_rate*((1-n_epi/30001)**0.9))
+        model.optimizer = optim.Adam(model.parameters(), lr=learning_rate*((1-n_epi/30001)**0.9)) #Lr decay for stable training
 
 if __name__ == '__main__':
     main()
